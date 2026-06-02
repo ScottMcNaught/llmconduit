@@ -30,6 +30,7 @@ pub struct Config {
     pub max_web_search_rounds: usize,
     pub flatten_content: bool,
     pub max_replay_entries: usize,
+    pub max_concurrent_upstream_requests: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -105,6 +106,8 @@ pub struct PersistedConfig {
     pub flatten_content: bool,
     #[serde(default = "default_max_replay_entries")]
     pub max_replay_entries: usize,
+    #[serde(default = "default_max_concurrent_upstream_requests")]
+    pub max_concurrent_upstream_requests: usize,
 }
 
 fn default_connect_timeout_secs() -> u64 {
@@ -127,6 +130,10 @@ fn default_upstream_failure_cooldown_secs() -> u64 {
     30
 }
 
+fn default_max_concurrent_upstream_requests() -> usize {
+    3
+}
+
 impl Default for PersistedConfig {
     fn default() -> Self {
         Self {
@@ -147,6 +154,7 @@ impl Default for PersistedConfig {
             max_web_search_rounds: 5,
             flatten_content: true,
             max_replay_entries: 1000,
+            max_concurrent_upstream_requests: default_max_concurrent_upstream_requests(),
         }
     }
 }
@@ -273,6 +281,7 @@ impl Config {
             max_web_search_rounds: config.max_web_search_rounds,
             flatten_content: config.flatten_content,
             max_replay_entries: config.max_replay_entries,
+            max_concurrent_upstream_requests: config.max_concurrent_upstream_requests.max(1),
         })
     }
 
@@ -460,6 +469,11 @@ fn apply_env_overrides(config: &mut PersistedConfig) {
         && let Ok(parsed) = value.parse()
     {
         config.max_replay_entries = parsed;
+    }
+    if let Ok(value) = env::var("LLMCONDUIT_MAX_CONCURRENT_UPSTREAM_REQUESTS")
+        && let Ok(parsed) = value.parse()
+    {
+        config.max_concurrent_upstream_requests = parsed;
     }
 }
 

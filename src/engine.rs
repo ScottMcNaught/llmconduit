@@ -47,6 +47,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::sync::Semaphore;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_stream::wrappers::ReceiverStream;
@@ -63,6 +64,12 @@ pub struct Gateway {
     monitor: MonitorHub,
     raw_output: Option<RawOutput>,
     upstream_model_catalog: Arc<Mutex<Option<CachedUpstreamModelCatalog>>>,
+    // Caps concurrent in-flight upstream turns. vLLM degrades past ~3 parallel
+    // requests, so the HTTP handler awaits this permit before spawning the
+    // upstream task — additional callers queue at the handler instead of
+    // piling load onto vLLM. The permit is moved into the spawned task and
+    // released when the upstream stream finishes (or fails).
+    upstream_concurrency: Arc<Semaphore>,
 }
 
 #[derive(Debug, Clone)]
@@ -232,6 +239,8 @@ impl Gateway {
         monitor: MonitorHub,
         raw_output: Option<RawOutput>,
     ) -> Self {
+        let upstream_concurrency =
+            Arc::new(Semaphore::new(config.max_concurrent_upstream_requests));
         Self {
             config,
             replay_store,
@@ -240,6 +249,7 @@ impl Gateway {
             monitor,
             raw_output,
             upstream_model_catalog: Arc::new(Mutex::new(None)),
+            upstream_concurrency,
         }
     }
 
@@ -300,10 +310,21 @@ impl Gateway {
                 .unwrap_or_default(),
         )?;
 
+        // Acquire a concurrency slot before kicking off the upstream task.
+        // Holding the permit through to the end of the spawned task means the
+        // count reflects in-flight upstream work, not just queued requests.
+        // acquire_owned() yields the runtime if all slots are busy, so the
+        // 4th+ caller queues here without blocking other axum work.
+        let permit = Arc::clone(&self.upstream_concurrency)
+            .acquire_owned()
+            .await
+            .map_err(|_| AppError::internal("upstream concurrency limiter closed"))?;
+
         let (tx, rx) = mpsc::channel(128);
         let gateway = Arc::clone(&self);
         let response_id = format!("resp_{}", Uuid::new_v4().simple());
         tokio::spawn(async move {
+            let _permit = permit; // released when this task finishes
             let result = gateway
                 .run_turn(
                     response_id.clone(),

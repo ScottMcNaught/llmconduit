@@ -2852,6 +2852,7 @@ fn test_config() -> Config {
         max_web_search_rounds: 5,
         flatten_content: true,
         max_replay_entries: 1000,
+        max_concurrent_upstream_requests: 3,
     }
 }
 
@@ -4656,6 +4657,7 @@ async fn cancels_mid_stream_when_client_disconnects() {
             max_web_search_rounds: 5,
             flatten_content: true,
             max_replay_entries: 1000,
+            max_concurrent_upstream_requests: 3,
         },
         ReplayStore::new(1000),
         Arc::new(upstream.clone()),
