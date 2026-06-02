@@ -180,6 +180,7 @@ pub fn run_configure_flow(path: PathBuf) -> Result<PersistedConfig, String> {
         max_web_search_rounds: existing.max_web_search_rounds,
         flatten_content: existing.flatten_content,
         max_replay_entries: existing.max_replay_entries,
+        max_concurrent_upstream_requests: existing.max_concurrent_upstream_requests,
     };
 
     let should_write = Confirm::with_theme(&theme)
