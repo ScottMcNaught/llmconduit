@@ -132,6 +132,7 @@ LLMCONDUIT_UPSTREAM_API_KEY
 LLMCONDUIT_UPSTREAM_MODEL
 LLMCONDUIT_UPSTREAM_CHAT_KWARGS_JSON
 LLMCONDUIT_UPSTREAM_FAILURE_COOLDOWN_SECS
+LLMCONDUIT_MAX_CONCURRENT_UPSTREAM_REQUESTS
 LLMCONDUIT_BRAVE_MAX_RESULTS
 LLMCONDUIT_REQUEST_TIMEOUT_SECS
 LLMCONDUIT_CONNECT_TIMEOUT_SECS
@@ -143,6 +144,11 @@ OPENAI_API_KEY
 ```
 
 `OPENAI_API_KEY` is used as a fallback upstream API key.
+
+`LLMCONDUIT_MAX_CONCURRENT_UPSTREAM_REQUESTS` caps the number of concurrent
+in-flight upstream requests; additional callers queue until a slot frees up.
+It is disabled by default (unlimited) — set it to a positive integer (e.g. `3`)
+to protect upstreams like vLLM that degrade under too much parallelism.
 
 ## Request Logs
 
