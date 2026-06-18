@@ -64,12 +64,13 @@ pub struct Gateway {
     monitor: MonitorHub,
     raw_output: Option<RawOutput>,
     upstream_model_catalog: Arc<Mutex<Option<CachedUpstreamModelCatalog>>>,
-    // Caps concurrent in-flight upstream turns. vLLM degrades past ~3 parallel
-    // requests, so the HTTP handler awaits this permit before spawning the
-    // upstream task — additional callers queue at the handler instead of
-    // piling load onto vLLM. The permit is moved into the spawned task and
-    // released when the upstream stream finishes (or fails).
-    upstream_concurrency: Arc<Semaphore>,
+    // Optional cap on concurrent in-flight upstream turns; off unless
+    // max_concurrent_upstream_requests is configured. When enabled, the HTTP
+    // handler awaits a permit before spawning the upstream task so additional
+    // callers queue at the handler instead of piling load onto vLLM (which
+    // degrades past ~3 parallel requests). The permit is moved into the spawned
+    // task and released when the upstream stream finishes (or fails).
+    upstream_concurrency: Option<Arc<Semaphore>>,
 }
 
 #[derive(Debug, Clone)]
@@ -239,8 +240,9 @@ impl Gateway {
         monitor: MonitorHub,
         raw_output: Option<RawOutput>,
     ) -> Self {
-        let upstream_concurrency =
-            Arc::new(Semaphore::new(config.max_concurrent_upstream_requests));
+        let upstream_concurrency = config
+            .max_concurrent_upstream_requests
+            .map(|limit| Arc::new(Semaphore::new(limit)));
         Self {
             config,
             replay_store,
@@ -310,15 +312,21 @@ impl Gateway {
                 .unwrap_or_default(),
         )?;
 
-        // Acquire a concurrency slot before kicking off the upstream task.
-        // Holding the permit through to the end of the spawned task means the
-        // count reflects in-flight upstream work, not just queued requests.
-        // acquire_owned() yields the runtime if all slots are busy, so the
-        // 4th+ caller queues here without blocking other axum work.
-        let permit = Arc::clone(&self.upstream_concurrency)
-            .acquire_owned()
-            .await
-            .map_err(|_| AppError::internal("upstream concurrency limiter closed"))?;
+        // Acquire a concurrency slot before kicking off the upstream task, when
+        // the limiter is enabled. Holding the permit through to the end of the
+        // spawned task means the count reflects in-flight upstream work, not
+        // just queued requests. acquire_owned() yields the runtime if all slots
+        // are busy, so the next caller queues here without blocking other axum
+        // work. When the limiter is disabled this is a no-op.
+        let permit = match &self.upstream_concurrency {
+            Some(semaphore) => Some(
+                Arc::clone(semaphore)
+                    .acquire_owned()
+                    .await
+                    .map_err(|_| AppError::internal("upstream concurrency limiter closed"))?,
+            ),
+            None => None,
+        };
 
         let (tx, rx) = mpsc::channel(128);
         let gateway = Arc::clone(&self);
